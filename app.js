@@ -115,6 +115,13 @@ io.on('connection', (socket) => {
 	socket.on('move', (data) => {
 		socket.broadcast.emit('otherMove', data);
 	});
+
+	socket.on("RTC-request", (data) => {
+
+		sockets[data.receiver].emit("RTC-request", data);
+
+	});
+
 });
 
 
