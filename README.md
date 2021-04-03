@@ -1,3 +1,11 @@
+# WebRTCzone
+
+Like a modern day Frankenstein, I've clumsily glued together Whoazone with the WebRTC code from SameVideo, to create a horror unlike that seen before by man. This project takes Whoazone, and replaces the player models with flying webcams, to further aid this whoazone's goalof being an online hangout space.
+
+WebRTCzone *barely* works, and probably needs a ton more work. Especially considering I probably destroyed all the performance optimisation work Rilin orignally did on this project with my edits.
+
+Anyway, enjoy the mess!
+
 # woahzone
 A prototype 3D hangout space built on [three.js](https://github.com/mrdoob/three.js) and [socket.io](https://github.com/socketio/socket.io).
 
