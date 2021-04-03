@@ -54,14 +54,8 @@ var openSansFont;
 
 // Video / Stream Vars
 
-const constraints = {
-  audio: true,
-  video: {
-    width: { ideal: 1280 },
-    height: { ideal: 720 }
-  }
-};
-
+const constraints = {audio: true, video: true};
+const peerVideos = [];
 const peerList = [];
 let stream;
 
@@ -83,6 +77,7 @@ if (!('getContext' in document.createElement('canvas'))) {
 if (WEBGL.isWebGLAvailable()) {
     // If everything is possible, start the app, otherwise show an error
     // Gets the usermedia before joining the server, so other clients have a stream they can request
+    initWebRTC();
     init();
     gameLoop();
 } else {
@@ -101,7 +96,6 @@ SOCKET.on('connect', () => {
     ID = SOCKET.id;
 
     console.log("DANE: ID is " + ID);
-    initWebRTC();
 
     // Broadcast join to other users
     SOCKET.emit('join', {id: ID});
@@ -138,6 +132,7 @@ SOCKET.on('otherJoin', (data) => {
     // Start the WebRTC connection process
 
     createPeerConnection(data.id);
+    console.log(data.id);
 
     // Send identity back if you have it
     if (name !== "" && name !== undefined) {
@@ -191,6 +186,7 @@ SOCKET.on('otherDisconnect', (userid) => {
         document.getElementById(userid).remove();
 
         delete peerList[userid];
+        delete peerVideos[userid];
 
     }
 });
@@ -426,6 +422,24 @@ function initFonts() {
 function gameLoop() {
     requestAnimationFrame(gameLoop);
 
+    // Updates the video objects so the video actually moves
+
+    // VideoList = [remoteView, videoImage, videoImageContext,videoTexture];
+
+    for (const [ID, VideoList] of Object.entries(peerVideos)) {
+      if (VideoList[0].readyState === VideoList[0].HAVE_ENOUGH_DATA) {
+
+        VideoList[2].drawImage(VideoList[0], 0, 0, VideoList[1].width, VideoList[1].height);
+
+        if (VideoList[3]) {
+    			VideoList[3].needsUpdate = true;
+        }
+
+      }
+    }
+
+    CAMERA.updateProjectionMatrix();
+
     time = performance.now();
     if (useDeltaTiming) {
         delta = (time - prevTime) / 1000;
@@ -528,7 +542,7 @@ function loadPlayerModel(model) {
 
 }
 
-function createOtherPlayer(peerId, video) {
+function createOtherPlayer(peerId) {
 
     // Load 3D model
     // if (model in PLAYER_MODELS && PLAYER_MODELS[model] !== undefined) {
@@ -542,28 +556,42 @@ function createOtherPlayer(peerId, video) {
     //     loadPlayerModel(model);
     // }
 
-  	let videoTexture = new THREE.VideoTexture(video);
+    // Big thanks to stemkoski, whose Github project allowed me to write this monstrosity!
+    // https://github.com/stemkoski/stemkoski.github.com/blob/master/Three.js/Many-Cameras.html
 
-    let materials = [
-      new THREE.MeshLambertMaterial({color:0x888888}),
-      new THREE.MeshLambertMaterial({color:0x888888}),
-      new THREE.MeshLambertMaterial({color:0x888888}),
-      new THREE.MeshLambertMaterial({color:0x888888}),
-      new THREE.MeshLambertMaterial({color:0x888888}),
-      new THREE.MeshLambertMaterial( {color:0xffffff, map: videoTexture, side: THREE.DoubleSide } ),
-    ]
+    let player = new THREE.Object3D();
 
-  	//let videoMaterial = new THREE.MeshLambertMaterial( { color: 0xffffff, map: videoTexture, side:THREE.DoubleSide } );
+    // peerVideos[peerId] = [remoteView, videoImage, videoImageContext,videoTexture];
+
+  	peerVideos[peerId][3] = new THREE.Texture(peerVideos[peerId][1]);
+  	peerVideos[peerId][3].minFilter = THREE.LinearFilter;
+  	peerVideos[peerId][3].magFilter = THREE.LinearFilter;
+
+  	let videoMaterial = new THREE.MeshBasicMaterial( { map: peerVideos[peerId][3], side:THREE.DoubleSide } );
   	// the geometry on which the movie will be displayed;
-  	let videoGeometry = new THREE.CubeGeometry(3, 2, 1);
-    // Flips the screen horizontally
-    videoGeometry.scale.x = -1;
+  	let videoGeometry = new THREE.PlaneGeometry( 2, 2, 1, 1 );
   	// attach video to a mesh that will move with the camera
-  	let videoScreen = new THREE.Mesh(videoGeometry, materials);
+  	let videoScreen = new THREE.Mesh( videoGeometry, videoMaterial );
 
-    processMaterials(videoScreen)
+    // Flips the screen horizontally
+    videoScreen.scale.x = -1;
 
-    USERS[peerId].mesh = videoScreen;
+  	// add a frame to the image.
+  	let frameGeo = new THREE.CubeGeometry(2, 2, 1);
+    // Moves the frame so the video is at the front
+    frameGeo.translate(0,0,0.502);
+  	let frameMat = new THREE.MeshLambertMaterial({color:0x888888, emissive:0x000011});
+  	let frameMesh = new THREE.Mesh(frameGeo, frameMat);
+
+    player.add(frameMesh);
+    player.add(videoScreen);
+
+    for (const [key, value] of Object.entries(USERS)) {
+      console.log(key, value);
+    }
+    console.log(peerId);
+
+    USERS[peerId].mesh = player;
 
     SCENE.add(USERS[peerId].mesh);
 
@@ -669,7 +697,7 @@ async function createPeerConnection(peerId) {
 
     peerList[peerId].onicecandidate = (event) => {
       SOCKET.emit("RTC-request", {sender: SOCKET.id, receiver: peerId, candidate: event.candidate});
-      console.log("Sent Ice Candidate to " + USERS[peerId].name);
+      console.log("Sent Ice Candidate to " + peerId);
     };
 
     // So what I think is happening is that this proposes a connection between the peer and the user. So it sets the description of the proposed connection locally, creates an offer to the other peer, and sends the proposed description that was just sent to the other peer. This probably ensures both connections are on the same page or something.
@@ -696,7 +724,7 @@ async function createPeerConnection(peerId) {
 
       if (hasVideo == false) {
 
-        console.log("Making Video Element for " + USERS[peerId].name);
+        console.log("Making Video Element for " + peerId);
 
         addVideo(event, peerId);
         hasVideo = true;
@@ -709,6 +737,11 @@ async function createPeerConnection(peerId) {
 
 async function addVideo(video, peerId) {
 
+  // Creates the div that will hold the two video objects
+
+  let videoDiv = document.createElement("div");
+  videoDiv.id = peerId;
+
   // Creates the video element
 
   let remoteView = document.createElement("video");
@@ -719,33 +752,52 @@ async function addVideo(video, peerId) {
 
   // Sets the settings of the video element, and attaches it to the videoDiv
 
-  remoteView.height = "720";
-  remoteView.width = "1280";
-  remoteView.id = peerId;
+  remoteView.height = "120";
+  remoteView.width = "160";
   remoteView.autoplay = true;
   remoteView.playsinline = true;
   remoteView.style.visibility = "hidden";
 
-  document.getElementById("videoContainer").appendChild(remoteView);
+  videoDiv.appendChild(remoteView);
+
+  // Creates the canvas that the video image will be drawn to (I'm not sure why this has to be done yet), and attaches it to the videoDiv
+
+  let videoImage = document.createElement("canvas");
+  videoImage.height = "120";
+  videoImage.width = "160";
+  videoImage.style.visibility = "hidden";
+
+  videoDiv.appendChild(videoImage);
+
+  // Attaches the videoDiv to the page
+
+  document.getElementById("videoContainer").appendChild(videoDiv)
+
+  // Adds the newly made video object and some other modelling stuff to a dictionary
+
+  let videoImageContext = videoImage.getContext('2d');
+  // background color if no video present
+  videoImageContext.fillStyle = '#000000';
+  videoImageContext.fillRect( 0, 0, videoImage.width, videoImage.height );
+
+  peerVideos[peerId] = [remoteView, videoImage, videoImageContext, undefined];
 
   // Creates the model for the other player
 
-  createOtherPlayer(peerId, remoteView);
+  createOtherPlayer(peerId);
 
   video.track.onended = (event) => {
 
     console.log("Stream ended");
 
-    remoteView.remove();
+    videoDiv.remove();
     delete peerList[peerId];
+    delete peerVideos[peerId];
 
   };
 }
 
 SOCKET.on("RTC-request", async ({sender, receiver, desc, candidate}) => {
-
-  if (!(stream == undefined)) {
-
   try {
 
     createPeerConnection(sender);
@@ -754,7 +806,7 @@ SOCKET.on("RTC-request", async ({sender, receiver, desc, candidate}) => {
 
       if (desc.type === "offer") {
 
-        console.log("Got Offer from " + USERS[sender].name);
+        console.log("Got Offer from " + sender);
 
         await peerList[sender].setRemoteDescription(desc);
 
@@ -764,19 +816,18 @@ SOCKET.on("RTC-request", async ({sender, receiver, desc, candidate}) => {
 
       } else if (desc.type === "answer") {
 
-        console.log("Got Answer from " + USERS[sender].name);
+        console.log("Got Answer from " + sender);
 
         await peerList[sender].setRemoteDescription(desc);
       }
 
     } else if (candidate) {
 
-      console.log("Got Candidate from " + USERS[sender].name);
+      console.log("Got Candidate from " + sender);
 
       await peerList[sender].addIceCandidate(candidate);
     }
   } catch (err) {
     console.error(err);
   }
-}
 });
