@@ -69,7 +69,10 @@ let stream;
 
 const config = {
   iceServers: [{
-    urls: "stun:stun.l.google.com:19302"
+    urls: [
+      "stun:stun.l.google.com:19302",
+      "stun:stun2.l.google.com:19302",
+    ]
   }]
 };
 
@@ -98,9 +101,13 @@ if (WEBGL.isWebGLAvailable()) {
 SOCKET.on('connect', () => {
     console.log("Connection established to server");
 
+    // This was randomly generated on the client end, but I changed it to be the socket ID to better mesh with my WebRTC code
     ID = SOCKET.id;
 
     console.log("DANE: ID is " + ID);
+
+    // Initialises WebRTC by getting the users local video and audio stream.
+    // This is done before the server is joined, as Peer Connections are made upon someone else joining the server, and it'll throw an error if theres no stream to send to the other person.
     initWebRTC();
 
     // Broadcast join to other users
@@ -177,6 +184,14 @@ SOCKET.on('otherMove', (data) => {
             USERS[userid].pos.set(data.pos.x, data.pos.y, data.pos.z);
             USERS[userid].rot.set(data.rot.x, data.rot.y, data.rot.z, data.rot.w);
             USERS[userid].alpha = 0;
+
+            let userVideo = document.getElementById(userid);
+
+            if (userVideo !== null) {
+              let distance = PLAYER.position.distanceTo(data.pos);
+              userVideo.volume = Math.min(1, 1 / distance);
+            }
+
         }
     }
 });
@@ -188,8 +203,9 @@ SOCKET.on('otherDisconnect', (userid) => {
         SCENE.remove(USERS[userid].mesh);
         USERS[userid] = undefined;
 
-        document.getElementById(userid).remove();
+        // Removes the video element that was holding their video stream, and removes them from the dictionary of WebRTC Peers
 
+        document.getElementById(userid).remove();
         delete peerList[userid];
 
     }
@@ -543,6 +559,8 @@ function createOtherPlayer(peerId, video) {
     // }
 
   	let videoTexture = new THREE.VideoTexture(video);
+    //videoTexture.minFilter = THREE.LinearFilter;
+    videoTexture.format = THREE.RGBFormat;
 
     let materials = [
       new THREE.MeshLambertMaterial({color:0x888888}),
@@ -553,9 +571,8 @@ function createOtherPlayer(peerId, video) {
       new THREE.MeshLambertMaterial( {color:0xffffff, map: videoTexture, side: THREE.DoubleSide } ),
     ]
 
-  	//let videoMaterial = new THREE.MeshLambertMaterial( { color: 0xffffff, map: videoTexture, side:THREE.DoubleSide } );
   	// the geometry on which the movie will be displayed;
-  	let videoGeometry = new THREE.CubeGeometry(3, 2, 1);
+  	let videoGeometry = new THREE.CubeGeometry(1.5, 1, 0.5);
     // Flips the screen horizontally
     videoGeometry.scale.x = -1;
   	// attach video to a mesh that will move with the camera
@@ -588,7 +605,7 @@ function createTextMesh(message, fontSize) {
 
     // Center align text
     textXOffset = -0.5 * (textGeometry.boundingBox.max.x - textGeometry.boundingBox.min.x);
-    textGeometry.translate(textXOffset, 1.3, 0);
+    textGeometry.translate(textXOffset, 0.8, 0);
     textGeometry.rotateY(Math.PI);
 
     // Generate text mesh
@@ -644,6 +661,11 @@ function initWebRTC() {
   navigator.mediaDevices.getUserMedia(constraints)
   .then(function(strm) {
     stream = strm;
+
+    peerList.forEach((peerConnection) => {
+      stream.getTracks().forEach((track) => peerConnection.addTrack(track, stream));
+    });
+
   })
   .catch(function(err) {
     console.log(err)
@@ -663,7 +685,11 @@ async function createPeerConnection(peerId) {
 
     // Adds each stream to the peer connection, for it to be sent later
 
-    stream.getTracks().forEach((track) => peerList[peerId].addTrack(track, stream));
+    if (stream !== undefined) {
+
+      stream.getTracks().forEach((track) => peerList[peerId].addTrack(track, stream));
+
+    }
 
     // Once the ICE server finds a viable candidate route for the two connections to talk down, an event will be called. This allows the candidate route to be sent over the sockets server to the other client.
 
@@ -744,8 +770,6 @@ async function addVideo(video, peerId) {
 
 SOCKET.on("RTC-request", async ({sender, receiver, desc, candidate}) => {
 
-  if (!(stream == undefined)) {
-
   try {
 
     createPeerConnection(sender);
@@ -778,5 +802,5 @@ SOCKET.on("RTC-request", async ({sender, receiver, desc, candidate}) => {
   } catch (err) {
     console.error(err);
   }
-}
+
 });
